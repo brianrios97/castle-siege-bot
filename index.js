@@ -4,10 +4,14 @@ const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
-  EmbedBuilder, Events, ComponentType
+  EmbedBuilder, Events, MessageFlags
 } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
+
+// ─── Error handling ───────────────────────────────────────────────────────────
+process.on('unhandledRejection', err => console.error('Unhandled rejection:', err));
+process.on('uncaughtException', err => console.error('Uncaught exception:', err));
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const DATA_PATH   = path.join(__dirname, 'data', 'parties.json');
@@ -24,6 +28,18 @@ const CLASS_META = {
   sm    : { label: 'Soul Master', emoji: '🔮',   short: 'SM'    },
   none  : { label: 'Sin definir', emoji: '❓',   short: '?'     },
 };
+
+function parseClassInput(input) {
+  if (!input) return 'none';
+  const clean = input.trim().toLowerCase();
+  if (clean.includes('bk') || clean.includes('knight') || clean.includes('inner bk')) return 'inner';
+  if (clean.includes('mg') || clean.includes('gladiator') || clean.includes('inner mg')) return 'mg';
+  if (clean.includes('elf') || clean.includes('muse') || clean.includes('ee') || clean.includes('ae')) return 'elf';
+  if (clean.includes('dl') || clean.includes('dark lord') || clean.includes('lord')) return 'dl';
+  if (clean.includes('sm') || clean.includes('soul') || clean.includes('master') || clean.includes('dw')) return 'sm';
+  if (clean.includes('inner')) return 'inner';
+  return 'none';
+}
 
 // ─── State helpers ────────────────────────────────────────────────────────────
 function loadState() {
@@ -71,43 +87,42 @@ function buildEmbed() {
 
   if (state.parties.length === 0) {
     embed.setDescription('> No hay partys creadas aún.\n> Un admin puede crear una con **➕ Nueva Party**.');
-    return embed;
+  } else {
+    const fields = state.parties.map((party, i) => {
+      const { status, missing } = validateParty(party);
+      const pin = party.fixed ? ' 📌' : '';
+      const count = `${party.members.length}/${MAX_MEMBERS}`;
+      let memberList = '';
+
+      if (party.members.length === 0) {
+        memberList = '*— vacía —*';
+      } else {
+        memberList = party.members.map(uid => {
+          const p   = state.players[uid];
+          const cls = CLASS_META[p?.class ?? 'none'] || CLASS_META.none;
+          return `${cls.emoji} \`[${cls.short}]\` ${p?.name ?? uid}`;
+        }).join('\n');
+      }
+
+      let footer = '';
+      if (missing.length > 0) footer = `\n⚠️ *falta ${missing.join(', ')}*`;
+
+      return {
+        name : `${i + 1}. ${party.name}${pin}  ${status}  (${count})`,
+        value: memberList + footer,
+        inline: false,
+      };
+    });
+
+    embed.addFields(fields);
   }
-
-  const fields = state.parties.map((party, i) => {
-    const { status, missing, isFull } = validateParty(party);
-    const pin = party.fixed ? ' 📌' : '';
-    const count = `${party.members.length}/${MAX_MEMBERS}`;
-    let memberList = '';
-
-    if (party.members.length === 0) {
-      memberList = '*— vacía —*';
-    } else {
-      memberList = party.members.map(uid => {
-        const p   = state.players[uid];
-        const cls = CLASS_META[p?.class ?? 'none'];
-        return `${cls.emoji} \`[${cls.short}]\` ${p?.name ?? uid}`;
-      }).join('\n');
-    }
-
-    let footer = '';
-    if (missing.length > 0) footer = `\n⚠️ *falta ${missing.join(', ')}*`;
-
-    return {
-      name : `${i + 1}. ${party.name}${pin}  ${status}  (${count})`,
-      value: memberList + footer,
-      inline: false,
-    };
-  });
-
-  embed.addFields(fields);
 
   // Unassigned players
   const assigned = new Set(state.parties.flatMap(p => p.members));
   const unassigned = Object.entries(state.players)
     .filter(([uid]) => !assigned.has(uid))
     .map(([, p]) => {
-      const cls = CLASS_META[p.class ?? 'none'];
+      const cls = CLASS_META[p.class ?? 'none'] || CLASS_META.none;
       return `${cls.emoji} \`[${cls.short}]\` ${p.name}`;
     });
 
@@ -141,19 +156,31 @@ function buildAdminButtons() {
   );
 }
 
+// ─── Target channel cache ─────────────────────────────────────────────────────
+async function getTargetChannel() {
+  return client.channels.cache.get(CHANNEL_ID) || await client.channels.fetch(CHANNEL_ID).catch(() => null);
+}
+
 // ─── Refresh pinned message ───────────────────────────────────────────────────
-async function refreshMessage(channel) {
-  const embed    = buildEmbed();
+async function refreshMessage() {
+  const channel = await getTargetChannel();
+  if (!channel) {
+    console.error('❌ Canal no encontrado para refrescar mensaje.');
+    return;
+  }
+  const embed     = buildEmbed();
   const memberRow = buildMemberButtons();
   const adminRow  = buildAdminButtons();
-  const payload  = { embeds: [embed], components: [memberRow, adminRow] };
+  const payload   = { embeds: [embed], components: [memberRow, adminRow] };
 
   try {
     if (state.messageId) {
-      const msg = await channel.messages.fetch(state.messageId).catch(() => null);
-      if (msg) { await msg.edit(payload); return; }
+      const msg = channel.messages.cache.get(state.messageId) || await channel.messages.fetch(state.messageId).catch(() => null);
+      if (msg) {
+        await msg.edit(payload);
+        return;
+      }
     }
-    // No message yet — post a new one
     const msg = await channel.send(payload);
     state.messageId = msg.id;
     saveState(state);
@@ -164,7 +191,12 @@ async function refreshMessage(channel) {
 
 // ─── Admin check ─────────────────────────────────────────────────────────────
 function isAdmin(member) {
-  return member.permissions.has('ManageGuild') || member.permissions.has('Administrator');
+  if (!member) return false;
+  if (member.permissions?.has('Administrator') || member.permissions?.has('ManageGuild')) return true;
+  // Soporte para roles comunes de administración
+  const adminRoleNames = ['asistente', 'guild master', 'admin', 'administrador', 'organizador', 'lider', 'líder', 'sub-lider', 'sub-líder'];
+  if (member.roles?.cache?.some(r => adminRoleNames.includes(r.name.toLowerCase()))) return true;
+  return false;
 }
 
 // ─── Client setup ─────────────────────────────────────────────────────────────
@@ -172,7 +204,6 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
   ],
   partials: [Partials.Message, Partials.Channel],
 });
@@ -180,320 +211,339 @@ const client = new Client({
 // ─── Ready ────────────────────────────────────────────────────────────────────
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-  if (!channel) { console.error('❌ Canal no encontrado. Revisá CHANNEL_ID en .env'); return; }
-  await refreshMessage(channel);
+  const channel = await getTargetChannel();
+  if (!channel) {
+    console.error('❌ Canal no encontrado. Revisá CHANNEL_ID en .env');
+    return;
+  }
+  await refreshMessage();
   console.log('📋 Mensaje del organizador listo en #' + channel.name);
 });
 
 // ─── Interaction handler ──────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async interaction => {
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
-
-  // ── BUTTONS ──────────────────────────────────────────────────────────────
-  if (interaction.isButton()) {
+  try {
     const uid = interaction.user.id;
 
-    // ── Registrar PJ ──────────────────────────────────────────────────────
-    if (interaction.customId === 'btn_register') {
-      const modal = new ModalBuilder()
-        .setCustomId('modal_register')
-        .setTitle('📝 Registrar Personaje');
+    // ── BUTTONS ────────────────────────────────────────────────────────────
+    if (interaction.isButton()) {
 
-      const nameInput = new TextInputBuilder()
-        .setCustomId('char_name')
-        .setLabel('Nombre del personaje')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Ej: Sagat, Vashi, Kizame...')
-        .setRequired(true)
-        .setMaxLength(30);
+      // ── Registrar PJ ────────────────────────────────────────────────────
+      if (interaction.customId === 'btn_register') {
+        const currentPlayer = state.players[uid];
+        const modal = new ModalBuilder()
+          .setCustomId('modal_register')
+          .setTitle('📝 Registrar Personaje');
 
-      modal.addComponents(new ActionRowBuilder().addComponents(nameInput));
-      await interaction.showModal(modal);
-      return;
-    }
+        const nameInput = new TextInputBuilder()
+          .setCustomId('char_name')
+          .setLabel('Nombre del personaje')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Ej: Mustang, Sagat, Vashi...')
+          .setValue(currentPlayer?.name || '')
+          .setRequired(true)
+          .setMaxLength(30);
 
-    // ── Unirme a Party ────────────────────────────────────────────────────
-    if (interaction.customId === 'btn_join') {
-      if (!state.players[uid]) {
-        await interaction.reply({ content: '❌ Primero registrá tu personaje con **📝 Registrar PJ**.', ephemeral: true });
-        return;
-      }
-      const available = state.parties.filter(p => p.members.length < MAX_MEMBERS && !p.members.includes(uid));
-      if (available.length === 0) {
-        await interaction.reply({ content: '❌ No hay partys disponibles con lugar.', ephemeral: true });
-        return;
-      }
-      const options = available.map(p => {
-        const { status } = validateParty(p);
-        return new StringSelectMenuOptionBuilder()
-          .setLabel(`${p.name} (${p.members.length}/${MAX_MEMBERS}) ${status}`)
-          .setValue(p.id);
-      });
-      const select = new StringSelectMenuBuilder()
-        .setCustomId('select_join_party')
-        .setPlaceholder('Elegí una party...')
-        .addOptions(options);
-      await interaction.reply({
-        content: '⚔️ ¿A qué party te querés unir?',
-        components: [new ActionRowBuilder().addComponents(select)],
-        ephemeral: true,
-      });
-      return;
-    }
+        const classInput = new TextInputBuilder()
+          .setCustomId('char_class')
+          .setLabel('Clase (BK, MG, Elf, DL, SM o vacío)')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Ej: DL, BK, Elf, SM, MG')
+          .setValue(currentPlayer && currentPlayer.class !== 'none' ? CLASS_META[currentPlayer.class]?.short || '' : '')
+          .setRequired(false)
+          .setMaxLength(20);
 
-    // ── Salir de Party ────────────────────────────────────────────────────
-    if (interaction.customId === 'btn_leave') {
-      const party = state.parties.find(p => p.members.includes(uid));
-      if (!party) {
-        await interaction.reply({ content: '❌ No estás en ninguna party.', ephemeral: true });
-        return;
-      }
-      party.members = party.members.filter(m => m !== uid);
-      saveState(state);
-      await refreshMessage(channel);
-      await interaction.reply({ content: `✅ Saliste de **${party.name}**.`, ephemeral: true });
-      return;
-    }
-
-    // ── Cambiar Clase ────────────────────────────────────────────────────
-    if (interaction.customId === 'btn_changeclass') {
-      if (!state.players[uid]) {
-        await interaction.reply({ content: '❌ Primero registrá tu personaje.', ephemeral: true });
-        return;
-      }
-      const options = Object.entries(CLASS_META).map(([val, meta]) =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`${meta.emoji} ${meta.label}`)
-          .setValue(val)
-          .setDefault(state.players[uid].class === val)
-      );
-      const select = new StringSelectMenuBuilder()
-        .setCustomId('select_changeclass')
-        .setPlaceholder('Elegí tu nueva clase...')
-        .addOptions(options);
-      await interaction.reply({
-        content: `🔄 Cambiá la clase de **${state.players[uid].name}**:`,
-        components: [new ActionRowBuilder().addComponents(select)],
-        ephemeral: true,
-      });
-      return;
-    }
-
-    // ── Nueva Party (admin) ───────────────────────────────────────────────
-    if (interaction.customId === 'btn_newparty') {
-      if (!isAdmin(interaction.member)) {
-        await interaction.reply({ content: '❌ Solo los admins pueden crear partys.', ephemeral: true });
-        return;
-      }
-      const id   = `party_${state.nextPartyId++}`;
-      const name = `Party ${state.parties.length + 1}`;
-      state.parties.push({ id, name, members: [], fixed: false });
-      saveState(state);
-      await refreshMessage(channel);
-      await interaction.reply({ content: `✅ **${name}** creada.`, ephemeral: true });
-      return;
-    }
-
-    // ── Desarmar Partys (admin) ───────────────────────────────────────────
-    if (interaction.customId === 'btn_desarmar') {
-      if (!isAdmin(interaction.member)) {
-        await interaction.reply({ content: '❌ Solo los admins pueden hacer esto.', ephemeral: true });
-        return;
-      }
-      state.parties.forEach(p => { if (!p.fixed) p.members = []; });
-      saveState(state);
-      await refreshMessage(channel);
-      await interaction.reply({ content: '🔄 Partys desarmadas. Las fijas (📌) se mantuvieron.', ephemeral: true });
-      return;
-    }
-
-    // ── Resetear Todo (admin) ─────────────────────────────────────────────
-    if (interaction.customId === 'btn_reset') {
-      if (!isAdmin(interaction.member)) {
-        await interaction.reply({ content: '❌ Solo los admins pueden hacer esto.', ephemeral: true });
-        return;
-      }
-      const confirmBtn = new ButtonBuilder().setCustomId('btn_reset_confirm').setLabel('✅ Sí, borrar todo').setStyle(ButtonStyle.Danger);
-      const cancelBtn  = new ButtonBuilder().setCustomId('btn_reset_cancel').setLabel('❌ Cancelar').setStyle(ButtonStyle.Secondary);
-      await interaction.reply({
-        content: '⚠️ **¿Estás seguro?** Esto va a borrar **todos** los jugadores y partys.',
-        components: [new ActionRowBuilder().addComponents(confirmBtn, cancelBtn)],
-        ephemeral: true,
-      });
-      return;
-    }
-
-    if (interaction.customId === 'btn_reset_confirm') {
-      state.parties   = [];
-      state.players   = {};
-      state.nextPartyId = 1;
-      saveState(state);
-      await refreshMessage(channel);
-      await interaction.update({ content: '🗑️ Todo reseteado.', components: [] });
-      return;
-    }
-
-    if (interaction.customId === 'btn_reset_cancel') {
-      await interaction.update({ content: '❌ Cancelado.', components: [] });
-      return;
-    }
-
-    // ── Fijar/Desfijar Party (admin) ──────────────────────────────────────
-    if (interaction.customId === 'btn_pin') {
-      if (!isAdmin(interaction.member)) {
-        await interaction.reply({ content: '❌ Solo los admins pueden hacer esto.', ephemeral: true });
-        return;
-      }
-      if (state.parties.length === 0) {
-        await interaction.reply({ content: '❌ No hay partys creadas.', ephemeral: true });
-        return;
-      }
-      const options = state.parties.map(p =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`${p.fixed ? '📌' : '📋'} ${p.name}`)
-          .setDescription(p.fixed ? 'Actualmente fija — click para desfijar' : 'Click para fijar')
-          .setValue(p.id)
-      );
-      const select = new StringSelectMenuBuilder()
-        .setCustomId('select_pin_party')
-        .setPlaceholder('Elegí la party a fijar/desfijar...')
-        .addOptions(options);
-      await interaction.reply({
-        content: '📌 ¿Qué party querés fijar o desfijar?',
-        components: [new ActionRowBuilder().addComponents(select)],
-        ephemeral: true,
-      });
-      return;
-    }
-  }
-
-  // ── SELECT MENUS ──────────────────────────────────────────────────────────
-  if (interaction.isStringSelectMenu()) {
-    const uid = interaction.user.id;
-
-    // ── Unirse a party ────────────────────────────────────────────────────
-    if (interaction.customId === 'select_join_party') {
-      const partyId = interaction.values[0];
-      const party   = state.parties.find(p => p.id === partyId);
-      if (!party) {
-        await interaction.update({ content: '❌ Party no encontrada.', components: [] });
-        return;
-      }
-      if (party.members.length >= MAX_MEMBERS) {
-        await interaction.update({ content: '❌ Esa party está llena.', components: [] });
-        return;
-      }
-      // Sacar de la party actual si ya está en alguna
-      state.parties.forEach(p => { p.members = p.members.filter(m => m !== uid); });
-      party.members.push(uid);
-      saveState(state);
-      await refreshMessage(channel);
-      const player = state.players[uid];
-      await interaction.update({
-        content: `✅ **${player.name}** se unió a **${party.name}**.`,
-        components: [],
-      });
-      return;
-    }
-
-    // ── Cambiar clase ─────────────────────────────────────────────────────
-    if (interaction.customId === 'select_changeclass') {
-      const newClass = interaction.values[0];
-      state.players[uid].class = newClass;
-      saveState(state);
-      await refreshMessage(channel);
-      const cls = CLASS_META[newClass];
-      await interaction.update({
-        content: `✅ Clase cambiada a **${cls.emoji} ${cls.label}**.`,
-        components: [],
-      });
-      return;
-    }
-
-    // ── Fijar/Desfijar party ──────────────────────────────────────────────
-    if (interaction.customId === 'select_pin_party') {
-      const partyId = interaction.values[0];
-      const party   = state.parties.find(p => p.id === partyId);
-      if (!party) {
-        await interaction.update({ content: '❌ Party no encontrada.', components: [] });
-        return;
-      }
-      party.fixed = !party.fixed;
-      saveState(state);
-      await refreshMessage(channel);
-      await interaction.update({
-        content: `✅ **${party.name}** ${party.fixed ? 'fijada 📌' : 'desfijada 📋'}.`,
-        components: [],
-      });
-      return;
-    }
-  }
-
-  // ── MODALS ────────────────────────────────────────────────────────────────
-  if (interaction.isModalSubmit()) {
-    const uid = interaction.user.id;
-
-    // ── Registrar personaje ───────────────────────────────────────────────
-    if (interaction.customId === 'modal_register') {
-      const name = interaction.fields.getTextInputValue('char_name').trim();
-      if (!name) {
-        await interaction.reply({ content: '❌ El nombre no puede estar vacío.', ephemeral: true });
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(nameInput),
+          new ActionRowBuilder().addComponents(classInput)
+        );
+        await interaction.showModal(modal);
         return;
       }
 
-      // Verificar que el nombre no lo use otro usuario
-      const taken = Object.entries(state.players).find(([id, p]) => p.name.toLowerCase() === name.toLowerCase() && id !== uid);
-      if (taken) {
-        await interaction.reply({ content: `❌ El nombre **${name}** ya está registrado por otro jugador.`, ephemeral: true });
+      // ── Unirme a Party ──────────────────────────────────────────────────
+      if (interaction.customId === 'btn_join') {
+        if (!state.players[uid]) {
+          await interaction.reply({ content: '❌ Primero registrá tu personaje con **📝 Registrar PJ**.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const available = state.parties.filter(p => p.members.length < MAX_MEMBERS && !p.members.includes(uid));
+        if (available.length === 0) {
+          await interaction.reply({ content: '❌ No hay partys disponibles con lugar.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const options = available.map(p => {
+          const { status } = validateParty(p);
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(`${p.name} (${p.members.length}/${MAX_MEMBERS}) ${status}`)
+            .setValue(p.id);
+        });
+        const select = new StringSelectMenuBuilder()
+          .setCustomId('select_join_party')
+          .setPlaceholder('Elegí una party...')
+          .addOptions(options);
+        await interaction.reply({
+          content: '⚔️ ¿A qué party te querés unir?',
+          components: [new ActionRowBuilder().addComponents(select)],
+          flags: MessageFlags.Ephemeral,
+        });
         return;
       }
 
-      // Si ya tenía PJ registrado, mostrar menú de clase directamente
-      const isUpdate = !!state.players[uid];
-      const prevClass = state.players[uid]?.class ?? 'none';
-      state.players[uid] = { name, class: prevClass, discordTag: interaction.user.username };
-      saveState(state);
+      // ── Salir de Party ──────────────────────────────────────────────────
+      if (interaction.customId === 'btn_leave') {
+        const party = state.parties.find(p => p.members.includes(uid));
+        if (!party) {
+          await interaction.reply({ content: '❌ No estás en ninguna party actualmente.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        party.members = party.members.filter(m => m !== uid);
+        saveState(state);
+        await interaction.reply({ content: `✅ Saliste de **${party.name}**.`, flags: MessageFlags.Ephemeral });
+        refreshMessage(); // Async background update
+        return;
+      }
 
-      // Pedir clase
-      const options = Object.entries(CLASS_META).map(([val, meta]) =>
-        new StringSelectMenuOptionBuilder()
-          .setLabel(`${meta.emoji} ${meta.label}`)
-          .setValue(val)
-          .setDefault(prevClass === val)
-      );
-      const select = new StringSelectMenuBuilder()
-        .setCustomId('select_register_class')
-        .setPlaceholder('Elegí tu clase...')
-        .addOptions(options);
+      // ── Cambiar Clase ──────────────────────────────────────────────────
+      if (interaction.customId === 'btn_changeclass') {
+        if (!state.players[uid]) {
+          await interaction.reply({ content: '❌ Primero registrá tu personaje con **📝 Registrar PJ**.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const currentClass = state.players[uid].class ?? 'none';
+        const options = Object.entries(CLASS_META).map(([val, meta]) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(`${meta.emoji} ${meta.label}`)
+            .setValue(val)
+            .setDefault(currentClass === val)
+        );
+        const select = new StringSelectMenuBuilder()
+          .setCustomId('select_changeclass')
+          .setPlaceholder('Elegí tu clase...')
+          .addOptions(options);
+        await interaction.reply({
+          content: `🔄 Cambiá la clase de **${state.players[uid].name}**:`,
+          components: [new ActionRowBuilder().addComponents(select)],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
 
-      await interaction.reply({
-        content: isUpdate
-          ? `🔄 Nombre actualizado a **${name}**. ¿Qué clase jugás?`
-          : `✅ **${name}** registrado. ¿Qué clase jugás?`,
-        components: [new ActionRowBuilder().addComponents(select)],
-        ephemeral: true,
-      });
-      return;
+      // ── Nueva Party (admin) ─────────────────────────────────────────────
+      if (interaction.customId === 'btn_newparty') {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden crear partys.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const id   = `party_${state.nextPartyId++}`;
+        const name = `Party ${state.parties.length + 1}`;
+        state.parties.push({ id, name, members: [], fixed: false });
+        saveState(state);
+        await interaction.reply({ content: `✅ **${name}** creada.`, flags: MessageFlags.Ephemeral });
+        refreshMessage();
+        return;
+      }
+
+      // ── Desarmar Partys (admin) ─────────────────────────────────────────
+      if (interaction.customId === 'btn_desarmar') {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden hacer esto.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        state.parties.forEach(p => { if (!p.fixed) p.members = []; });
+        saveState(state);
+        await interaction.reply({ content: '🔄 Partys desarmadas. Las que están fijadas (📌) se mantuvieron.', flags: MessageFlags.Ephemeral });
+        refreshMessage();
+        return;
+      }
+
+      // ── Resetear Todo (admin) ───────────────────────────────────────────
+      if (interaction.customId === 'btn_reset') {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden hacer esto.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const confirmBtn = new ButtonBuilder().setCustomId('btn_reset_confirm').setLabel('✅ Sí, borrar todo').setStyle(ButtonStyle.Danger);
+        const cancelBtn  = new ButtonBuilder().setCustomId('btn_reset_cancel').setLabel('❌ Cancelar').setStyle(ButtonStyle.Secondary);
+        await interaction.reply({
+          content: '⚠️ **¿Estás seguro?** Esto va a vaciar todas las partys y borrar la lista de personajes registrados.',
+          components: [new ActionRowBuilder().addComponents(confirmBtn, cancelBtn)],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      if (interaction.customId === 'btn_reset_confirm') {
+        state.parties     = [];
+        state.players     = {};
+        state.nextPartyId = 1;
+        saveState(state);
+        await interaction.update({ content: '🗑️ Todo ha sido reseteado.', components: [] });
+        refreshMessage();
+        return;
+      }
+
+      if (interaction.customId === 'btn_reset_cancel') {
+        await interaction.update({ content: '❌ Cancelado.', components: [] });
+        return;
+      }
+
+      // ── Fijar/Desfijar Party (admin) ────────────────────────────────────
+      if (interaction.customId === 'btn_pin') {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden hacer esto.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        if (state.parties.length === 0) {
+          await interaction.reply({ content: '❌ No hay partys creadas para fijar.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const options = state.parties.map(p =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(`${p.fixed ? '📌' : '📋'} ${p.name}`)
+            .setDescription(p.fixed ? 'Actualmente fija — click para desfijar' : 'Click para fijar')
+            .setValue(p.id)
+        );
+        const select = new StringSelectMenuBuilder()
+          .setCustomId('select_pin_party')
+          .setPlaceholder('Elegí la party a fijar/desfijar...')
+          .addOptions(options);
+        await interaction.reply({
+          content: '📌 ¿Qué party querés fijar o desfijar?',
+          components: [new ActionRowBuilder().addComponents(select)],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
     }
-  }
 
-  // ── Select de clase al registrar ──────────────────────────────────────────
-  if (interaction.isStringSelectMenu() && interaction.customId === 'select_register_class') {
-    const uid      = interaction.user.id;
-    const newClass = interaction.values[0];
-    if (!state.players[uid]) {
-      await interaction.update({ content: '❌ Error: registrá tu nombre primero.', components: [] });
-      return;
+    // ── SELECT MENUS ────────────────────────────────────────────────────────
+    if (interaction.isStringSelectMenu()) {
+
+      // ── Unirse a party ──────────────────────────────────────────────────
+      if (interaction.customId === 'select_join_party') {
+        const partyId = interaction.values[0];
+        const party   = state.parties.find(p => p.id === partyId);
+        if (!party) {
+          await interaction.update({ content: '❌ Party no encontrada.', components: [] });
+          return;
+        }
+        if (party.members.length >= MAX_MEMBERS) {
+          await interaction.update({ content: '❌ Esa party ya está llena (5/5).', components: [] });
+          return;
+        }
+        // Sacar de la party previa si ya estaba en alguna
+        state.parties.forEach(p => { p.members = p.members.filter(m => m !== uid); });
+        party.members.push(uid);
+        saveState(state);
+        const player = state.players[uid];
+        await interaction.update({
+          content: `✅ **${player?.name || 'Tu personaje'}** se unió a **${party.name}**.`,
+          components: [],
+        });
+        refreshMessage();
+        return;
+      }
+
+      // ── Cambiar clase ───────────────────────────────────────────────────
+      if (interaction.customId === 'select_changeclass') {
+        const newClass = interaction.values[0];
+        if (!state.players[uid]) {
+          await interaction.update({ content: '❌ Registrá tu personaje primero.', components: [] });
+          return;
+        }
+        state.players[uid].class = newClass;
+        saveState(state);
+        const cls = CLASS_META[newClass];
+        await interaction.update({
+          content: `✅ Clase de **${state.players[uid].name}** actualizada a ${cls.emoji} **${cls.label}**.`,
+          components: [],
+        });
+        refreshMessage();
+        return;
+      }
+
+      // ── Fijar/Desfijar party ────────────────────────────────────────────
+      if (interaction.customId === 'select_pin_party') {
+        const partyId = interaction.values[0];
+        const party   = state.parties.find(p => p.id === partyId);
+        if (!party) {
+          await interaction.update({ content: '❌ Party no encontrada.', components: [] });
+          return;
+        }
+        party.fixed = !party.fixed;
+        saveState(state);
+        await interaction.update({
+          content: `✅ **${party.name}** ahora está ${party.fixed ? 'fijada 📌 (no se desarmará)' : 'desfijada 📋'}.`,
+          components: [],
+        });
+        refreshMessage();
+        return;
+      }
     }
-    state.players[uid].class = newClass;
-    saveState(state);
-    await refreshMessage(channel);
-    const cls = CLASS_META[newClass];
-    await interaction.update({
-      content: `✅ Personaje **${state.players[uid].name}** registrado como ${cls.emoji} **${cls.label}**.`,
-      components: [],
-    });
+
+    // ── MODALS ──────────────────────────────────────────────────────────────
+    if (interaction.isModalSubmit()) {
+
+      // ── Registrar personaje ─────────────────────────────────────────────
+      if (interaction.customId === 'modal_register') {
+        const nameInput  = interaction.fields.getTextInputValue('char_name').trim();
+        const rawClass   = interaction.fields.getTextInputValue('char_class')?.trim() || '';
+
+        if (!nameInput) {
+          await interaction.reply({ content: '❌ El nombre no puede estar vacío.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        // Verificar si el nombre ya lo registró otra persona
+        const taken = Object.entries(state.players).find(
+          ([id, p]) => p.name.toLowerCase() === nameInput.toLowerCase() && id !== uid
+        );
+        if (taken) {
+          await interaction.reply({
+            content: `❌ El nombre **${nameInput}** ya está registrado por otro usuario.`,
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        const isUpdate = !!state.players[uid];
+        const parsedClass = rawClass ? parseClassInput(rawClass) : (state.players[uid]?.class || 'none');
+
+        state.players[uid] = {
+          name: nameInput,
+          class: parsedClass,
+          discordTag: interaction.user.username,
+        };
+        saveState(state);
+
+        const cls = CLASS_META[parsedClass] || CLASS_META.none;
+        const msgText = isUpdate
+          ? `🔄 Personaje actualizado: **${nameInput}** (${cls.emoji} ${cls.label})`
+          : `✅ ¡Personaje **${nameInput}** registrado exitosamente como ${cls.emoji} **${cls.label}**!`;
+
+        await interaction.reply({
+          content: msgText + '\n*Podés cambiar tu clase en cualquier momento con el botón 🔄 Cambiar Clase.*',
+          flags: MessageFlags.Ephemeral,
+        });
+
+        // Actualizar el panel en segundo plano
+        refreshMessage();
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('Error procesando interacción:', err);
+    try {
+      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: '❌ Ocurrió un error al procesar la solicitud. Por favor reintentá.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    } catch (e) {
+      console.error('Error al enviar mensaje de error de interacción:', e);
+    }
   }
 });
 
