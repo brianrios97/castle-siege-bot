@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🏰 Castle Siege — Party Organizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 16px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    /* ── Drag & Drop ── */
+    .player-chip {
+      cursor: grab;
+      user-select: none;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .player-chip:active { cursor: grabbing; }
+    .player-chip.dragging { opacity: 0.35; transform: scale(0.95); }
+
+    .drop-zone { min-height: 52px; transition: background 0.15s, border-color 0.15s; }
+    .drop-zone.drag-over {
+      background: rgba(99, 102, 241, 0.15);
+      border-color: #6366f1 !important;
+    }
+
+    /* ── Class badges ── */
+    .badge-inner { background:#b45309; color:#fff; }
+    .badge-elf   { background:#15803d; color:#fff; }
+    .badge-dl    { background:#6d28d9; color:#fff; }
+    .badge-sm    { background:#1d4ed8; color:#fff; }
+    .badge-mg    { background:#b91c1c; color:#fff; }
+    .badge-none  { background:#4b5563; color:#e5e7eb; }
+
+    .party-card { border-left: 4px solid #6366f1; }
+    .party-card.is-fixed { border-left: 4px solid #eab308; }
+
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 99px; }
+
+    input[type="text"], select {
+      background: #1e2130;
+      color: #e2e8f0;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 6px 10px;
+      outline: none;
+      font-size: 14px;
+    }
+    input[type="text"]:focus, select:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 2px rgba(99,102,241,0.25);
+    }
+
+    .filter-btn {
+      font-size: 12px;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      border: 1px solid #374151;
+      background: transparent;
+      color: #94a3b8;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover { border-color: #6366f1; color: #e2e8f0; }
+    .filter-btn.active { background: #6366f1; border-color: #6366f1; color: #fff; }
+
+    .btn-primary {
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.88; }
+
+    .btn-secondary {
+      background: transparent;
+      color: #94a3b8;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-secondary:hover { background: #1e2130; color: #e2e8f0; }
+
+    .card {
+      background: #161b27;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    }
+
+    @keyframes fadeIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+    .fade-in { animation: fadeIn 0.18s ease; }
+
+    .status-ok   { background:#15803d22; color:#4ade80; border:1px solid #15803d55; border-radius:9999px; padding:1px 8px; font-size:12px; }
+    .status-warn { background:#b4530922; color:#fbbf24; border:1px solid #b4530955; border-radius:9999px; padding:1px 8px; font-size:12px; }
+    .status-full { background:#1d4ed822; color:#60a5fa; border:1px solid #1d4ed855; border-radius:9999px; padding:1px 8px; font-size:12px; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal-box {
+      background: #161b27; border: 1px solid #2d3748;
+      border-radius: 14px; padding: 20px; width: 100%; max-width: 480px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 20px; right: 20px;
+      background: #1e2130; border: 1px solid #374151;
+      color: #e2e8f0; border-radius: 10px;
+      padding: 8px 16px; font-size: 14px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      animation: fadeIn 0.2s ease;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+
+<div style="max-width:1200px; margin:0 auto;">
+
+  <!-- HEADER -->
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+    <div>
+      <h1 style="font-size:22px; font-weight:800; color:#e2e8f0; margin:0;">🏰 Castle Siege — Party Organizer</h1>
+      <p style="font-size:13px; color:#64748b; margin:3px 0 0;">Armá tus partys para el CC &nbsp;·&nbsp; Máx 5 jugadores &nbsp;·&nbsp; Req: 1 Inner · 1 Elf · 1 DL por party</p>
+    </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <button class="btn-primary" id="btnAddParty">＋ Party</button>
+      <button class="btn-secondary" id="btnUnassignParties" title="Regresa los jugadores de las partys no fijas al pool sin borrarlos">🔄 Desarmar partys</button>
+      <button class="btn-secondary" id="btnExport">📋 Exportar</button>
+      <button class="btn-secondary" id="btnReset" title="Opciones para reiniciar">🗑 Limpiar</button>
+    </div>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div style="display:grid; grid-template-columns:300px 1fr; gap:14px;">
+
+    <!-- PANEL IZQUIERDO -->
+    <div style="display:flex; flex-direction:column; gap:12px;">
+
+      <!-- Agregar jugador -->
+      <div class="card">
+        <h2 style="font-size:14px; font-weight:700; margin:0 0 10px; color:#e2e8f0;">Agregar jugador</h2>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <input id="playerName" type="text" placeholder="Nombre del personaje" style="width:100%;" />
+          <select id="playerClass" style="width:100%;">
+            <option value="none">❓ Sin definir todavía</option>
+            <option value="inner">🛡 Inner (BK)</option>
+            <option value="mg">⚡ Inner (MG)</option>
+            <option value="elf">🌿 Elf</option>
+            <option value="dl">👑 Dark Lord</option>
+            <option value="sm">🔮 Soul Master</option>
+          </select>
+          <button class="btn-primary" id="btnAdd" style="width:100%;">Agregar</button>
+        </div>
+      </div>
+
+      <!-- Pool jugadores -->
+      <div class="card" style="flex:1;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <h2 style="font-size:14px; font-weight:700; margin:0; color:#e2e8f0;">
+            Sin asignar <span id="poolCount" style="color:#64748b; font-weight:400;">(0)</span>
+          </h2>
+          <input id="searchPool" type="text" placeholder="Buscar…" style="font-size:12px; padding:4px 8px; width:100px;" />
+        </div>
+
+        <!-- Filtros -->
+        <div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:8px;">
+          <button class="filter-btn active" data-filter="all">Todos</button>
+          <button class="filter-btn" data-filter="inner">🛡 Inner (BK/MG)</button>
+          <button class="filter-btn" data-filter="elf">🌿 Elf</button>
+          <button class="filter-btn" data-filter="dl">👑 DL</button>
+          <button class="filter-btn" data-filter="sm">🔮 SM</button>
+          <button class="filter-btn" data-filter="none">❓ Pendiente</button>
+        </div>
+
+        <div id="playerPool" class="drop-zone"
+             style="border:1.5px dashed #2d3748; border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:6px; max-height:55vh; overflow-y:auto;"
+             data-zone="pool">
+          <p id="poolEmpty" style="text-align:center; color:#64748b; font-size:13px; padding:16px 0; margin:0;">
+            Agregá jugadores arriba ↑
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- PARTYS -->
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      <div id="partiesContainer" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(260px,1fr)); gap:12px; align-content:start;">
+      </div>
+      <div id="noParties" class="card" style="text-align:center; border-style:dashed; color:#64748b; font-size:14px; padding:40px;">
+        No hay partys todavía — hacé clic en <strong style="color:#e2e8f0;">＋ Party</strong> para crear una.
+      </div>
+    </div>
+  </div>
+
+  <!-- SUMMARY -->
+  <div id="summaryBar" class="card" style="margin-top:12px; display:none; padding:10px 14px;">
+    <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center;">
+      <span style="font-weight:700; color:#e2e8f0; font-size:14px;">Resumen:</span>
+      <span id="sumTotal"  style="font-size:13px; color:#94a3b8;"></span>
+      <span id="sumReady"  style="font-size:13px; color:#4ade80;"></span>
+      <span id="sumWarn"   style="font-size:13px; color:#fbbf24;"></span>
+    </div>
+  </div>
+</div>
+
+<!-- EXPORT MODAL -->
+<div id="exportModal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h3 style="margin:0; font-size:16px; font-weight:700; color:#e2e8f0;">📋 Exportar partys</h3>
+      <button id="closeExport" style="background:none; border:none; color:#64748b; cursor:pointer; font-size:18px;">✕</button>
+    </div>
+    <textarea id="exportContent" readonly
+              style="width:100%; height:260px; background:#0f1117; border:1px solid #2d3748; border-radius:8px; padding:12px; font-size:13px; color:#e2e8f0; font-family:monospace; resize:none; outline:none; white-space:pre;"></textarea>
+    <button class="btn-primary" id="copyExport" style="width:100%; margin-top:10px; padding:10px;">📋 Copiar al portapapeles</button>
+  </div>
+</div>
+
+<script>
+// ════════════════════════
+//  STATE
+// ════════════════════════
+let state = { players: [], parties: [], nextPid: 1, nextParty: 1 };
+
+const CLASS_INFO = {
+  inner: { label:'Inner', icon:'🛡', badge:'badge-inner' },
+  elf:   { label:'Elf',   icon:'🌿', badge:'badge-elf'   },
+  dl:    { label:'DL',    icon:'👑', badge:'badge-dl'    },
+  sm:    { label:'SM',    icon:'🔮', badge:'badge-sm'    },
+  mg:    { label:'MG',    icon:'⚡', badge:'badge-mg'    },
+  none:  { label:'Sin clase', icon:'❓', badge:'badge-none' },
+};
+
+const MAX = 5;
+let dragPlayerId = null;
+let activeFilter = 'all';
+
+function save() { try { localStorage.setItem('cs_party_v3', JSON.stringify(state)); } catch(_){} }
+function load() { try { const d = localStorage.getItem('cs_party_v3'); if(d) state = JSON.parse(d); } catch(_){} }
+
+// ════════════════════════
+//  VALIDATION
+// ════════════════════════
+function validate(party) {
+  const members = party.members.map(id => state.players.find(p => p.id === id)).filter(Boolean);
+  const has = c => members.some(m => m.cls === c);
+  const hasInnerBuff = members.some(m => m.cls === 'inner' || m.cls === 'mg');
+  const issues = [];
+  if (!hasInnerBuff) issues.push('falta Inner (BK/MG)');
+  if (!has('elf'))       issues.push('falta Elf');
+  if (!has('dl'))        issues.push('falta DL');
+  return { ok: issues.length === 0, full: members.length >= MAX, count: members.length, issues };
+}
+
+// ════════════════════════
+//  CHIP HTML
+// ════════════════════════
+function ci(cls) { return CLASS_INFO[cls] || CLASS_INFO.none; }
+
+function chipHTML(player, zone) {
+  const c = ci(player.cls);
+  const inPool = zone === 'pool';
+  return `
+    <div class="player-chip fade-in"
+         draggable="true" data-id="${player.id}" data-zone="${zone}"
+         style="display:flex; align-items:center; gap:8px; background:#0f1117; border:1px solid #2d3748;
+                border-radius:8px; padding:5px 8px; font-size:14px;">
+      <select class="cls-select ${c.badge}" data-pid="${player.id}" title="Cambiar clase"
+              style="padding:2px 4px; border-radius:5px; font-size:12px; font-weight:700; border:none; outline:none; cursor:pointer;">
+        <option value="none"  ${(!player.cls || player.cls==='none')?'selected':''}>❓ Sin clase</option>
+        <option value="inner" ${player.cls==='inner'?'selected':''}>🛡 Inner (BK)</option>
+        <option value="mg"    ${player.cls==='mg'?'selected':''}>⚡ Inner (MG)</option>
+        <option value="elf"   ${player.cls==='elf'?'selected':''}>🌿 Elf</option>
+        <option value="dl"    ${player.cls==='dl'?'selected':''}>👑 DL</option>
+        <option value="sm"    ${player.cls==='sm'?'selected':''}>🔮 SM</option>
+      </select>
+      <span style="font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#e2e8f0;">${player.name}</span>
+      ${!inPool
+        ? `<button class="btn-rm" data-pid="${player.id}" title="Quitar de party"
+                   style="background:none; border:none; color:#64748b; cursor:pointer; font-size:13px; padding:0 2px;">✕</button>`
+        : `<button class="btn-del" data-pid="${player.id}" title="Eliminar jugador"
+                   style="background:none; border:none; color:#64748b; cursor:pointer; font-size:13px; padding:0 2px;">🗑</button>`}
+    </div>`;
+}
+
+// ════════════════════════
+//  RENDER POOL
+// ════════════════════════
+function renderPool() {
+  const pool = document.getElementById('playerPool');
+  const empty = document.getElementById('poolEmpty');
+  const search = document.getElementById('searchPool').value.toLowerCase();
+  const assigned = new Set(state.parties.flatMap(p => p.members));
+  let list = state.players.filter(p => !assigned.has(p.id));
+
+  if (activeFilter === 'none') list = list.filter(p => !p.cls || p.cls === 'none');
+  else if (activeFilter === 'inner') list = list.filter(p => p.cls === 'inner' || p.cls === 'mg');
+  else if (activeFilter !== 'all') list = list.filter(p => p.cls === activeFilter);
+  if (search) list = list.filter(p => p.name.toLowerCase().includes(search));
+
+  document.getElementById('poolCount').textContent = `(${list.length})`;
+  pool.querySelectorAll('.player-chip').forEach(e => e.remove());
+
+  if (list.length === 0) {
+    empty.style.display = 'block';
+    empty.textContent = state.players.length === 0 ? 'Agregá jugadores arriba ↑' : 'Sin jugadores con este filtro';
+  } else {
+    empty.style.display = 'none';
+    list.forEach(p => pool.insertAdjacentHTML('beforeend', chipHTML(p, 'pool')));
+  }
+  attachChips(pool, 'pool');
+}
+
+// ════════════════════════
+//  RENDER PARTIES
+// ════════════════════════
+function renderParties() {
+  const cont = document.getElementById('partiesContainer');
+  const noP  = document.getElementById('noParties');
+  cont.innerHTML = '';
+  noP.style.display = state.parties.length ? 'none' : 'block';
+
+  state.parties.forEach((party, idx) => {
+    const v = validate(party);
+    const members = party.members.map(id => state.players.find(p => p.id === id)).filter(Boolean);
+    const isFixed = !!party.isFixed;
+    let statusCls, statusTxt;
+    if (v.ok && v.full)  { statusCls='status-full'; statusTxt='🔵 Llena'; }
+    else if (v.ok)       { statusCls='status-ok';   statusTxt='✅ Lista'; }
+    else                  { statusCls='status-warn';  statusTxt='⚠ Incompleta'; }
+
+    const pct = (members.length / MAX * 100).toFixed(0);
+    const card = document.createElement('div');
+    card.className = `party-card card fade-in ${isFixed ? 'is-fixed' : ''}`;
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.gap = '8px';
+
+    card.innerHTML = `
+      <div style="display:flex; align-items:center; gap:6px;">
+        <div style="width:24px; height:24px; border-radius:50%; background:${isFixed ? '#eab308' : '#6366f1'}; color:#0f1117; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${idx+1}</div>
+        <input class="party-name" value="${party.name}" data-partyid="${party.id}"
+               style="flex:1; background:transparent; border:none; outline:none; font-weight:700; color:#e2e8f0; font-size:14px;" />
+        <button class="btn-toggle-fixed" data-partyid="${party.id}" title="${isFixed ? 'Party fija (protegida al desarmar). Clic para desfijar' : 'Marcar como party fija'}"
+                style="background:none; border:none; cursor:pointer; font-size:14px; padding:2px 4px; opacity:${isFixed ? '1' : '0.45'};">
+          ${isFixed ? '📌' : '📍'}
+        </button>
+        <span class="${statusCls}">${statusTxt}</span>
+        <span style="font-size:12px; color:#64748b;">${members.length}/${MAX}</span>
+        <button class="btn-del-party" data-partyid="${party.id}" title="Eliminar party"
+                style="background:none; border:none; color:#64748b; cursor:pointer; font-size:13px; margin-left:2px;">✕</button>
+      </div>
+
+      ${isFixed ? `
+        <div style="font-size:11px; color:#facc15; background:rgba(234,179,8,0.1); border:1px solid rgba(234,179,8,0.3); border-radius:6px; padding:2px 6px; display:inline-flex; align-items:center; gap:4px; width:fit-content;">
+          📌 Party fija (se conserva al desarmar)
+        </div>` : ''}
+
+      ${v.issues.length ? `
+        <div style="font-size:12px; color:#fbbf24; background:rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.25); border-radius:6px; padding:4px 8px;">
+          ⚠ ${v.issues.join(' · ')}
+        </div>` : ''}
+
+      <div style="width:100%; background:#1a1f2e; border-radius:999px; height:4px;">
+        <div style="height:4px; border-radius:999px; background:${isFixed ? '#eab308' : '#6366f1'}; width:${pct}%; transition:width 0.3s;"></div>
+      </div>
+
+      <div class="drop-zone" data-zone="party-${party.id}"
+           style="border:1.5px dashed #2d3748; border-radius:8px; padding:6px; display:flex; flex-direction:column; gap:6px; min-height:52px;">
+        ${members.length ? members.map(p => chipHTML(p, `party-${party.id}`)).join('') : '<p style="text-align:center; color:#64748b; font-size:12px; margin:8px 0;">Arrastrá jugadores aquí</p>'}
+      </div>
+
+      <div style="border-top:1px solid #2d3748; padding-top:8px;">
+        <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+          <span style="font-size:12px; color:#64748b;">Asignar:</span>
+          ${buildQuick(party)}
+        </div>
+      </div>
+    `;
+
+    cont.appendChild(card);
+
+    card.querySelector('.btn-toggle-fixed').addEventListener('click', e => {
+      const p = state.parties.find(x => x.id == e.currentTarget.dataset.partyid);
+      if (p) {
+        p.isFixed = !p.isFixed;
+        save();
+        render();
+        showToast(p.isFixed ? `📌 ${p.name} marcada como FIJA` : `📍 ${p.name} ahora es normal`);
+      }
+    });
+
+    card.querySelector('.party-name').addEventListener('change', e => {
+      const p = state.parties.find(x => x.id == e.target.dataset.partyid);
+      if (p) { p.name = e.target.value; save(); }
+    });
+    card.querySelector('.btn-del-party').addEventListener('click', e => {
+      state.parties = state.parties.filter(x => x.id != e.currentTarget.dataset.partyid);
+      save(); render();
+    });
+    card.querySelectorAll('.btn-rm').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const pid = parseInt(e.currentTarget.dataset.pid);
+        party.members = party.members.filter(id => id !== pid);
+        save(); render();
+      });
+    });
+    card.querySelectorAll('.btn-qa').forEach(btn => {
+      btn.addEventListener('click', e => {
+        assignTo(parseInt(e.currentTarget.dataset.pid), parseInt(e.currentTarget.dataset.partyid));
+      });
+    });
+
+    attachDropZone(card.querySelector('.drop-zone'));
+    attachChips(card, `party-${party.id}`);
+  });
+
+  renderSummary();
+}
+
+function buildQuick(party) {
+  const assigned = new Set(state.parties.flatMap(p => p.members));
+  const avail = state.players.filter(p => !assigned.has(p.id));
+  if (party.members.length >= MAX) return `<span style="font-size:12px; color:#64748b;">Party llena</span>`;
+  if (!avail.length) return `<span style="font-size:12px; color:#64748b;">Sin jugadores disponibles</span>`;
+  return avail.slice(0,6).map(p => {
+    const c = ci(p.cls);
+    return `<button class="btn-qa ${c.badge}" data-pid="${p.id}" data-partyid="${party.id}"
+                    style="border:none; border-radius:4px; padding:2px 7px; font-size:12px; cursor:pointer; font-weight:600;"
+                    title="${p.name} [${c.label}]">
+              ${c.icon} ${p.name}
+            </button>`;
+  }).join('') + (avail.length > 6 ? `<span style="font-size:12px; color:#64748b;">+${avail.length-6}</span>` : '');
+}
+
+// ════════════════════════
+//  SUMMARY
+// ════════════════════════
+function renderSummary() {
+  const bar = document.getElementById('summaryBar');
+  if (!state.parties.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'block';
+  const assigned = new Set(state.parties.flatMap(p => p.members));
+  const ok   = state.parties.filter(p => validate(p).ok).length;
+  const warn = state.parties.filter(p => !validate(p).ok).length;
+  document.getElementById('sumTotal').textContent = `👥 ${assigned.size} asignados · ${state.players.length - assigned.size} sin asignar`;
+  document.getElementById('sumReady').textContent = `✅ ${ok} part${ok!==1?'ys':'y'} listas`;
+  document.getElementById('sumWarn').textContent  = warn ? `⚠ ${warn} incompleta${warn!==1?'s':''}` : '';
+}
+
+// ════════════════════════
+//  DRAG & DROP
+// ════════════════════════
+function attachChips(container, zone) {
+  container.querySelectorAll('.player-chip').forEach(chip => {
+    chip.addEventListener('dragstart', e => {
+      // Si hizo click en el select o boton, no arrastrar
+      if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') {
+        e.preventDefault();
+        return;
+      }
+      dragPlayerId = parseInt(chip.dataset.id);
+      chip.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    chip.addEventListener('dragend', () => {
+      chip.classList.remove('dragging');
+      dragPlayerId = null;
+      document.querySelectorAll('.drop-zone').forEach(z => z.classList.remove('drag-over'));
+    });
+
+    const clsSelect = chip.querySelector('.cls-select');
+    if (clsSelect) {
+      clsSelect.addEventListener('mousedown', e => e.stopPropagation());
+      clsSelect.addEventListener('change', e => {
+        const pid = parseInt(e.currentTarget.dataset.pid);
+        const newCls = e.currentTarget.value;
+        const player = state.players.find(p => p.id === pid);
+        if (player) {
+          player.cls = newCls;
+          save();
+          render();
+          showToast(`Clase de ${player.name} actualizada a ${CLASS_INFO[newCls]?.label || newCls}`);
+        }
+      });
+    }
+
+    const delBtn = chip.querySelector('.btn-del');
+    if (delBtn) {
+      delBtn.addEventListener('mousedown', e => e.stopPropagation());
+      delBtn.addEventListener('click', e => {
+        const pid = parseInt(e.currentTarget.dataset.pid);
+        state.players = state.players.filter(p => p.id !== pid);
+        state.parties.forEach(p => { p.members = p.members.filter(id => id !== pid); });
+        save(); render();
+      });
+    }
+  });
+}
+
+function attachDropZone(dz) {
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('drag-over'); });
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    if (dragPlayerId === null) return;
+    handleDrop(dragPlayerId, dz.dataset.zone);
+  });
+}
+
+function handleDrop(playerId, targetZone) {
+  state.parties.forEach(p => { p.members = p.members.filter(id => id !== playerId); });
+  if (targetZone !== 'pool') {
+    const partyId = parseInt(targetZone.replace('party-', ''));
+    const party = state.parties.find(p => p.id === partyId);
+    if (party && party.members.length < MAX) party.members.push(playerId);
+    else if (party) showToast('⚠ Party llena — máximo 5 jugadores');
+  }
+  save(); render();
+}
+
+function assignTo(playerId, partyId) {
+  state.parties.forEach(p => { p.members = p.members.filter(id => id !== playerId); });
+  const party = state.parties.find(p => p.id === partyId);
+  if (party && party.members.length < MAX) { party.members.push(playerId); save(); render(); }
+  else showToast('⚠ Party llena — máximo 5 jugadores');
+}
+
+// ════════════════════════
+//  TOAST
+// ════════════════════════
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+// ════════════════════════
+//  RENDER
+// ════════════════════════
+function render() { renderPool(); renderParties(); }
+
+// ════════════════════════
+//  EVENTS
+// ════════════════════════
+function addPlayer() {
+  const n = document.getElementById('playerName');
+  const c = document.getElementById('playerClass');
+  if (!n.value.trim()) { showToast('⚠ Ingresá el nombre'); n.focus(); return; }
+  const cls = c.value || 'none';
+  if (state.players.some(p => p.name.toLowerCase() === n.value.trim().toLowerCase())) {
+    showToast('⚠ Ya existe ese jugador'); return;
+  }
+  state.players.push({ id: state.nextPid++, name: n.value.trim(), cls: cls });
+  n.value = ''; c.value = 'none'; n.focus();
+  save(); render();
+}
+
+document.getElementById('btnAdd').addEventListener('click', addPlayer);
+document.getElementById('playerName').addEventListener('keydown', e => { if(e.key==='Enter') addPlayer(); });
+
+document.getElementById('btnAddParty').addEventListener('click', () => {
+  state.parties.push({ id: state.nextParty, name:`Party ${state.nextParty}`, members:[] });
+  state.nextParty++;
+  save(); render();
+});
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    renderPool();
+  });
+});
+
+document.getElementById('searchPool').addEventListener('input', renderPool);
+
+document.getElementById('btnExport').addEventListener('click', () => {
+  let txt = '🏰 CASTLE SIEGE — PARTYS\r\n' + '─'.repeat(30) + '\r\n\r\n';
+  state.parties.forEach((party, i) => {
+    const members = party.members.map(id => state.players.find(p => p.id === id)).filter(Boolean);
+    const v = validate(party);
+    txt += `${i+1}. ${party.name} (${members.length}/${MAX}) ${v.ok ? '✅' : '⚠'}\r\n`;
+    if (members.length === 0) {
+      txt += `   (Sin miembros)\r\n`;
+    } else {
+      members.forEach(m => {
+        const c = ci(m.cls);
+        txt += `   • ${c.icon} [${c.label}] ${m.name}\r\n`;
+      });
+    }
+    if (v.issues.length) {
+      txt += `   ⚠ ${v.issues.join(' · ')}\r\n`;
+    }
+    txt += '\r\n';
+  });
+  const assigned = new Set(state.parties.flatMap(p => p.members));
+  const unassigned = state.players.filter(p => !assigned.has(p.id));
+  if (unassigned.length) {
+    txt += 'SIN ASIGNAR:\r\n';
+    unassigned.forEach(p => {
+      const c = ci(p.cls);
+      txt += `   • ${c.icon} [${c.label}] ${p.name}\r\n`;
+    });
+  }
+  document.getElementById('exportContent').value = txt;
+  document.getElementById('exportContent').textContent = txt;
+  document.getElementById('exportModal').style.display = 'flex';
+});
+
+document.getElementById('closeExport').addEventListener('click', () => {
+  document.getElementById('exportModal').style.display = 'none';
+});
+
+document.getElementById('copyExport').addEventListener('click', () => {
+  navigator.clipboard.writeText(document.getElementById('exportContent').textContent)
+    .then(() => showToast('✅ Copiado al portapapeles'));
+});
+
+// Desarmar partys (regresa miembros no fijos al pool)
+document.getElementById('btnUnassignParties').addEventListener('click', () => {
+  const fixedCount = state.parties.filter(p => p.isFixed).length;
+  let msg = '¿Desarmar las partys para armar de nuevo?';
+  if (fixedCount > 0) {
+    msg += `\n(Se mantendrán intactas ${fixedCount} party(s) fijas marcadas con 📌)`;
+  }
+  if (!confirm(msg)) return;
+
+  state.parties.forEach(p => {
+    if (!p.isFixed) {
+      p.members = [];
+    }
+  });
+  save();
+  render();
+  showToast('🔄 Partys desarmadas. Jugadores listos en el pool');
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  const choice = prompt(
+    "Elegí una opción de limpieza:\n" +
+    "1: Devolver todos los jugadores al pool (manteniendo la lista de personajes)\n" +
+    "2: Borrar TODO (jugadores y partys de cero)\n\n" +
+    "Escribí 1 o 2:"
+  );
+
+  if (choice === '1') {
+    state.parties.forEach(p => p.members = []);
+    save(); render();
+    showToast('👥 Jugadores devueltos al pool');
+  } else if (choice === '2') {
+    if (confirm("¿Estás seguro de borrar absolutamente todos los jugadores y partys?")) {
+      state = { players:[], parties:[], nextPid:1, nextParty:1 };
+      save(); render();
+      showToast('🗑 Todo limpiado');
+    }
+  }
+});
+
+// Pool drop zone
+attachDropZone(document.getElementById('playerPool'));
+
+// ════════════════════════
+//  INIT
+// ════════════════════════
+load();
+render();
+</script>
+</body>
+</html>
