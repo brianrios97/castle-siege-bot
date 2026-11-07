@@ -86,7 +86,7 @@ function buildEmbed() {
     .setFooter({ text: 'Castle Siege • MuServer' });
 
   if (state.parties.length === 0) {
-    embed.setDescription('> No hay partys creadas aún.\n> Un admin o asistente puede crear una con **➕ Nueva Party**.');
+    embed.setDescription('> No hay partys creadas aún.\n> Podés crear una haciendo click en **➕ Nueva Party**.');
   } else {
     const fields = state.parties.map((party, i) => {
       const { status, missing } = validateParty(party);
@@ -137,24 +137,33 @@ function buildEmbed() {
   return embed;
 }
 
-// ─── Component builders ───────────────────────────────────────────────────────
-function buildMemberButtons() {
-  return new ActionRowBuilder().addComponents(
+// ─── Public component builders ────────────────────────────────────────────────
+function buildPublicRows() {
+  const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('btn_register').setLabel('📝 Registrar PJ').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId('btn_join').setLabel('⚔️ Unirme a Party').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('btn_leave').setLabel('🚪 Salir de Party').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('btn_changeclass').setLabel('🔄 Cambiar Clase').setStyle(ButtonStyle.Secondary),
   );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('btn_newparty').setLabel('➕ Nueva Party').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('btn_staff_panel').setLabel('⚙️ Opciones Staff').setStyle(ButtonStyle.Secondary),
+  );
+
+  return [row1, row2];
 }
 
-function buildAdminButtons() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('btn_newparty').setLabel('➕ Nueva Party').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('btn_move_player').setLabel('🔀 Mover PJ').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('btn_pin').setLabel('📌 Fijar/Desfijar').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('btn_desarmar').setLabel('🔄 Desarmar Partys').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('btn_reset').setLabel('🗑️ Resetear Todo').setStyle(ButtonStyle.Danger),
-  );
+// ─── Ephemeral Staff Panel row builder ─────────────────────────────────────────
+function buildStaffPanelRows() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('btn_move_player').setLabel('🔀 Mover PJ').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('btn_pin').setLabel('📌 Fijar/Desfijar Party').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('btn_desarmar').setLabel('🔄 Desarmar Partys').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId('btn_reset').setLabel('🗑️ Resetear Todo').setStyle(ButtonStyle.Danger),
+    )
+  ];
 }
 
 // ─── Target channel cache ─────────────────────────────────────────────────────
@@ -169,10 +178,9 @@ async function refreshMessage() {
     console.error('❌ Canal no encontrado para refrescar mensaje.');
     return;
   }
-  const embed     = buildEmbed();
-  const memberRow = buildMemberButtons();
-  const adminRow  = buildAdminButtons();
-  const payload   = { embeds: [embed], components: [memberRow, adminRow] };
+  const embed   = buildEmbed();
+  const rows    = buildPublicRows();
+  const payload = { embeds: [embed], components: rows };
 
   try {
     if (state.messageId) {
@@ -333,22 +341,37 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      // ── Nueva Party (admin) ─────────────────────────────────────────────
+      // ── Nueva Party (¡Ahora disponible para TODOS los usuarios!) ─────────
       if (interaction.customId === 'btn_newparty') {
-        if (!isAdmin(interaction.member)) {
-          await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden crear partys.', flags: MessageFlags.Ephemeral });
-          return;
-        }
         const id   = `party_${state.nextPartyId++}`;
         const name = `Party ${state.parties.length + 1}`;
         state.parties.push({ id, name, members: [], fixed: false });
         saveState(state);
-        await interaction.reply({ content: `✅ **${name}** creada.`, flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: `✅ **${name}** creada exitosamente.`, flags: MessageFlags.Ephemeral });
         refreshMessage();
         return;
       }
 
-      // ── Mover PJ (admin) ────────────────────────────────────────────────
+      // ── Botón Panel Staff (Abre el panel privado de administración) ──────
+      if (interaction.customId === 'btn_staff_panel') {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Este panel es exclusivo para miembros con rol de **Asistente**, **Soporte** o **Administrador**.',
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        const panelRows = buildStaffPanelRows();
+        await interaction.reply({
+          content: '⚙️ **Panel de Administración y Control:**\nElegí qué acción querés realizar en las partys:',
+          components: panelRows,
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
+      // ── Mover PJ (admin, llamado desde el panel de staff) ────────────────
       if (interaction.customId === 'btn_move_player') {
         if (!isAdmin(interaction.member)) {
           await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden mover jugadores.', flags: MessageFlags.Ephemeral });
@@ -375,11 +398,19 @@ client.on(Events.InteractionCreate, async interaction => {
           .setPlaceholder('Elegí qué personaje querés mover...')
           .addOptions(options);
 
-        await interaction.reply({
-          content: '🔀 **Gestión de partys:** ¿Qué personaje querés reasignar o mover?',
-          components: [new ActionRowBuilder().addComponents(select)],
-          flags: MessageFlags.Ephemeral,
-        });
+        // Si ya estamos dentro de un mensaje efímero del panel, usamos update
+        if (interaction.message?.flags?.has(MessageFlags.Ephemeral)) {
+          await interaction.update({
+            content: '🔀 **Gestión de partys:** ¿Qué personaje querés reasignar o mover?',
+            components: [new ActionRowBuilder().addComponents(select)],
+          });
+        } else {
+          await interaction.reply({
+            content: '🔀 **Gestión de partys:** ¿Qué personaje querés reasignar o mover?',
+            components: [new ActionRowBuilder().addComponents(select)],
+            flags: MessageFlags.Ephemeral,
+          });
+        }
         return;
       }
 
@@ -391,7 +422,12 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         state.parties.forEach(p => { if (!p.fixed) p.members = []; });
         saveState(state);
-        await interaction.reply({ content: '🔄 Partys desarmadas. Las que están fijadas (📌) se mantuvieron.', flags: MessageFlags.Ephemeral });
+        const replyPayload = { content: '🔄 Partys desarmadas. Las que están fijadas (📌) se mantuvieron.', components: [] };
+        if (interaction.message?.flags?.has(MessageFlags.Ephemeral)) {
+          await interaction.update(replyPayload);
+        } else {
+          await interaction.reply({ ...replyPayload, flags: MessageFlags.Ephemeral });
+        }
         refreshMessage();
         return;
       }
@@ -404,11 +440,16 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         const confirmBtn = new ButtonBuilder().setCustomId('btn_reset_confirm').setLabel('✅ Sí, borrar todo').setStyle(ButtonStyle.Danger);
         const cancelBtn  = new ButtonBuilder().setCustomId('btn_reset_cancel').setLabel('❌ Cancelar').setStyle(ButtonStyle.Secondary);
-        await interaction.reply({
+        const confirmPayload = {
           content: '⚠️ **¿Estás seguro?** Esto va a vaciar todas las partys y borrar la lista de personajes registrados.',
           components: [new ActionRowBuilder().addComponents(confirmBtn, cancelBtn)],
-          flags: MessageFlags.Ephemeral,
-        });
+        };
+
+        if (interaction.message?.flags?.has(MessageFlags.Ephemeral)) {
+          await interaction.update(confirmPayload);
+        } else {
+          await interaction.reply({ ...confirmPayload, flags: MessageFlags.Ephemeral });
+        }
         return;
       }
 
@@ -447,11 +488,17 @@ client.on(Events.InteractionCreate, async interaction => {
           .setCustomId('select_pin_party')
           .setPlaceholder('Elegí la party a fijar/desfijar...')
           .addOptions(options);
-        await interaction.reply({
+
+        const pinPayload = {
           content: '📌 ¿Qué party querés fijar o desfijar?',
           components: [new ActionRowBuilder().addComponents(select)],
-          flags: MessageFlags.Ephemeral,
-        });
+        };
+
+        if (interaction.message?.flags?.has(MessageFlags.Ephemeral)) {
+          await interaction.update(pinPayload);
+        } else {
+          await interaction.reply({ ...pinPayload, flags: MessageFlags.Ephemeral });
+        }
         return;
       }
     }
@@ -471,7 +518,6 @@ client.on(Events.InteractionCreate, async interaction => {
         const currentParty = state.parties.find(p => p.members.includes(targetUid));
         const options = [];
 
-        // Opción para sacar de party (quedar sin asignar)
         options.push(
           new StringSelectMenuOptionBuilder()
             .setLabel('📋 Dejar Sin Asignar (Quitar de su party)')
@@ -479,7 +525,6 @@ client.on(Events.InteractionCreate, async interaction => {
             .setValue('unassign')
         );
 
-        // Opciones para mover a cada party
         for (const p of state.parties) {
           const isCurrent = currentParty?.id === p.id;
           const isFull    = p.members.length >= MAX_MEMBERS;
@@ -514,7 +559,6 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
 
-        // Remover de cualquier party actual
         state.parties.forEach(p => {
           p.members = p.members.filter(m => m !== targetUid);
         });
@@ -562,7 +606,6 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.update({ content: '❌ Esa party ya está llena (5/5).', components: [] });
           return;
         }
-        // Sacar de la party previa si ya estaba en alguna
         state.parties.forEach(p => { p.members = p.members.filter(m => m !== uid); });
         party.members.push(uid);
         saveState(state);
@@ -625,7 +668,6 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
 
-        // Verificar si el nombre ya lo registró otra persona
         const taken = Object.entries(state.players).find(
           ([id, p]) => p.name.toLowerCase() === nameInput.toLowerCase() && id !== uid
         );
@@ -657,7 +699,6 @@ client.on(Events.InteractionCreate, async interaction => {
           flags: MessageFlags.Ephemeral,
         });
 
-        // Actualizar el panel en segundo plano
         refreshMessage();
         return;
       }
