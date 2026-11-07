@@ -43,11 +43,55 @@ function parseClassInput(input) {
   return 'none';
 }
 
+// ─── Initial State Snapshot (Preserva los 19 jugadores del CS) ────────────────
+const DEFAULT_INITIAL_STATE = {
+  parties: [
+    { id: "party_1", name: "Party 1", members: ["709092274281119804", "1385770674303537155", "1353493332436975689", "1167689767404716112"], fixed: false },
+    { id: "party_2", name: "Party 2", members: ["356496336079552525", "1558929388760858644", "1329901199457128489"], fixed: false },
+    { id: "party_3", name: "Party 3", members: ["1013977109397516328", "706734124337201172", "925222969993723904", "1407618804535660564"], fixed: false },
+    { id: "party_4", name: "Party 4", members: ["472880105715269642", "783100111088517151"], fixed: false },
+    { id: "party_5", name: "Party 5", members: ["1270553622509260850"], fixed: false },
+    { id: "party_6", name: "Party 6", members: [], fixed: false },
+    { id: "party_7", name: "Party 7", members: [], fixed: false },
+    { id: "party_8", name: "Party 8", members: ["280142109623844864", "1353509863753252914", "1428899666300239926", "830705180760211466"], fixed: false },
+    { id: "party_9", name: "Party 9", members: [], fixed: false }
+  ],
+  players: {
+    "709092274281119804": { name: "Bahamoth", class: "dl", discordTag: "fazzitto." },
+    "356496336079552525": { name: "Mustang", class: "sm", discordTag: "brianr3331" },
+    "1385770674303537155": { name: "GOROAZTEKA", class: "mg", discordTag: "goroazteka_" },
+    "1353493332436975689": { name: "La Sapito", class: "elf", discordTag: "villadolorense" },
+    "1013977109397516328": { name: "DmoonKing", class: "dl", discordTag: "cburgosr" },
+    "472880105715269642": { name: "Mahoraga", class: "dl", discordTag: "giancargp92" },
+    "706734124337201172": { name: "Takamura25", class: "dl", discordTag: "lokuaz25" },
+    "1428899666300239926": { name: "FRESAMG", class: "mg", discordTag: "fresita987" },
+    "783100111088517151": { name: "BlueGirl", class: "elf", discordTag: "blue070326" },
+    "925222969993723904": { name: "Raptalia", class: "elf", discordTag: "manuelf0750" },
+    "1558929388760858644": { name: "AMDRyzen5", class: "dl", discordTag: "x_mandarina_xd" },
+    "693971821107871775": { name: "CD", class: "sm", discordTag: "michopatuco79" },
+    "1270553622509260850": { name: "lPENELOPEl", class: "dl", discordTag: "jostel2018" },
+    "280142109623844864": { name: "GarrenT", class: "dl", discordTag: "garrent8358" },
+    "1167689767404716112": { name: "WARL0CK", class: "dl", discordTag: "fedefisherman" },
+    "1353509863753252914": { name: "silfi", class: "elf", discordTag: "muguiwara07805" },
+    "830705180760211466": { name: "Sunnset", class: "sm", discordTag: "kevvo30" },
+    "1329901199457128489": { name: "Kizame", class: "mg", discordTag: "kawamatsu22_12628" },
+    "1407618804535660564": { name: "SMNemain", class: "sm", discordTag: "marco.antoniosanchez" }
+  },
+  messageId: null,
+  nextPartyId: 10
+};
+
 // ─── State helpers ────────────────────────────────────────────────────────────
 function loadState() {
-  if (!fs.existsSync(DATA_PATH)) return { parties: [], players: {}, messageId: null, nextPartyId: 1 };
-  try { return JSON.parse(fs.readFileSync(DATA_PATH, 'utf8')); }
-  catch { return { parties: [], players: {}, messageId: null, nextPartyId: 1 }; }
+  if (fs.existsSync(DATA_PATH)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+      if (data && data.parties && data.parties.length > 0 && Object.keys(data.players || {}).length > 0) {
+        return data;
+      }
+    } catch {}
+  }
+  return JSON.parse(JSON.stringify(DEFAULT_INITIAL_STATE));
 }
 
 function saveState(state) {
@@ -126,7 +170,7 @@ function validateParty(party) {
   return { isValid, isFull, status, missing };
 }
 
-// ─── Embed builder ────────────────────────────────────────────────────
+// ─── Embed builder ────────────────────────────────────────────────────────────
 function buildEmbed() {
   const embed = new EmbedBuilder()
     .setTitle('🏰 CASTLE SIEGE — PARTYS')
@@ -220,7 +264,7 @@ async function getTargetChannel() {
   return client.channels.cache.get(CHANNEL_ID) || await client.channels.fetch(CHANNEL_ID).catch(() => null);
 }
 
-// ─── Refresh pinned message ───────────────────────────────────────────────────
+// ─── Refresh pinned message & eliminate duplicates ────────────────────────────
 async function refreshMessage() {
   const channel = await getTargetChannel();
   if (!channel) {
@@ -232,15 +276,37 @@ async function refreshMessage() {
   const payload = { embeds: [embed], components: rows };
 
   try {
-    if (state.messageId) {
-      const msg = channel.messages.cache.get(state.messageId) || await channel.messages.fetch(state.messageId).catch(() => null);
-      if (msg) {
-        await msg.edit(payload);
-        return;
+    // Buscar mensajes recientes en el canal
+    const recentMessages = await channel.messages.fetch({ limit: 20 }).catch(() => null);
+    let targetMsg = null;
+
+    if (recentMessages) {
+      // Filtrar todos los mensajes enviados por este bot
+      const botMessages = Array.from(recentMessages.values())
+        .filter(m => m.author.id === client.user.id)
+        .sort((a, b) => b.createdTimestamp - a.createdTimestamp); // El más nuevo primero
+
+      if (botMessages.length > 0) {
+        // Tomamos el mensaje más reciente como el panel activo
+        targetMsg = botMessages[0];
+
+        // Borramos los mensajes duplicados anteriores para que no queden 2 paneles
+        for (let i = 1; i < botMessages.length; i++) {
+          await botMessages[i].delete().catch(() => null);
+        }
       }
     }
-    const msg = await channel.send(payload);
-    state.messageId = msg.id;
+
+    if (targetMsg) {
+      await targetMsg.edit(payload);
+      state.messageId = targetMsg.id;
+      saveState(state);
+      return;
+    }
+
+    // Si no había ningún mensaje previo, enviamos uno nuevo
+    const newMsg = await channel.send(payload);
+    state.messageId = newMsg.id;
     saveState(state);
   } catch (err) {
     console.error('Error refreshing message:', err);
@@ -251,7 +317,6 @@ async function refreshMessage() {
 function isAdmin(member) {
   if (!member) return false;
   if (member.permissions?.has('Administrator') || member.permissions?.has('ManageGuild')) return true;
-  // Soporte para roles de staff / administración
   const adminRoleNames = [
     'asistente', 'soporte', 'staff', 'guild master', 'gm', 'admin',
     'administrador', 'organizador', 'lider', 'líder', 'sub-lider', 'sub-líder', 'mod', 'moderador'
@@ -390,7 +455,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      // ── Nueva Party (¡Disponible para TODOS!) ───────────────────────────
+      // ── Nueva Party (Disponible para todos) ─────────────────────────────
       if (interaction.customId === 'btn_newparty') {
         const id   = `party_${state.nextPartyId++}`;
         const name = `Party ${state.parties.length + 1}`;
@@ -401,7 +466,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      // ── Botón Panel Staff (Abre el panel privado de administración) ──────
+      // ── Botón Panel Staff ───────────────────────────────────────────────
       if (interaction.customId === 'btn_staff_panel') {
         if (!isAdmin(interaction.member)) {
           await interaction.reply({
@@ -420,7 +485,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      // ── Mover PJ (admin, llamado desde el panel de staff) ────────────────
+      // ── Mover PJ (admin) ────────────────────────────────────────────────
       if (interaction.customId === 'btn_move_player') {
         if (!isAdmin(interaction.member)) {
           await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden mover jugadores.', flags: MessageFlags.Ephemeral });
