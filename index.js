@@ -86,7 +86,7 @@ function buildEmbed() {
     .setFooter({ text: 'Castle Siege • MuServer' });
 
   if (state.parties.length === 0) {
-    embed.setDescription('> No hay partys creadas aún.\n> Un admin puede crear una con **➕ Nueva Party**.');
+    embed.setDescription('> No hay partys creadas aún.\n> Un admin o asistente puede crear una con **➕ Nueva Party**.');
   } else {
     const fields = state.parties.map((party, i) => {
       const { status, missing } = validateParty(party);
@@ -150,9 +150,10 @@ function buildMemberButtons() {
 function buildAdminButtons() {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('btn_newparty').setLabel('➕ Nueva Party').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('btn_move_player').setLabel('🔀 Mover PJ').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('btn_pin').setLabel('📌 Fijar/Desfijar').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('btn_desarmar').setLabel('🔄 Desarmar Partys').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('btn_reset').setLabel('🗑️ Resetear Todo').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('btn_pin').setLabel('📌 Fijar/Desfijar Party').setStyle(ButtonStyle.Secondary),
   );
 }
 
@@ -193,8 +194,11 @@ async function refreshMessage() {
 function isAdmin(member) {
   if (!member) return false;
   if (member.permissions?.has('Administrator') || member.permissions?.has('ManageGuild')) return true;
-  // Soporte para roles comunes de administración
-  const adminRoleNames = ['asistente', 'guild master', 'admin', 'administrador', 'organizador', 'lider', 'líder', 'sub-lider', 'sub-líder'];
+  // Soporte para roles de staff / administración
+  const adminRoleNames = [
+    'asistente', 'soporte', 'staff', 'guild master', 'gm', 'admin',
+    'administrador', 'organizador', 'lider', 'líder', 'sub-lider', 'sub-líder', 'mod', 'moderador'
+  ];
   if (member.roles?.cache?.some(r => adminRoleNames.includes(r.name.toLowerCase()))) return true;
   return false;
 }
@@ -300,7 +304,7 @@ client.on(Events.InteractionCreate, async interaction => {
         party.members = party.members.filter(m => m !== uid);
         saveState(state);
         await interaction.reply({ content: `✅ Saliste de **${party.name}**.`, flags: MessageFlags.Ephemeral });
-        refreshMessage(); // Async background update
+        refreshMessage();
         return;
       }
 
@@ -332,7 +336,7 @@ client.on(Events.InteractionCreate, async interaction => {
       // ── Nueva Party (admin) ─────────────────────────────────────────────
       if (interaction.customId === 'btn_newparty') {
         if (!isAdmin(interaction.member)) {
-          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden crear partys.', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden crear partys.', flags: MessageFlags.Ephemeral });
           return;
         }
         const id   = `party_${state.nextPartyId++}`;
@@ -344,10 +348,45 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
+      // ── Mover PJ (admin) ────────────────────────────────────────────────
+      if (interaction.customId === 'btn_move_player') {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden mover jugadores.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const playerEntries = Object.entries(state.players);
+        if (playerEntries.length === 0) {
+          await interaction.reply({ content: '❌ No hay jugadores registrados en el sistema.', flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        const options = playerEntries.slice(0, 25).map(([pUid, p]) => {
+          const currentParty = state.parties.find(party => party.members.includes(pUid));
+          const partyText    = currentParty ? currentParty.name : 'Sin asignar';
+          const cls          = CLASS_META[p.class ?? 'none'] || CLASS_META.none;
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(`${p.name} [${cls.short}]`)
+            .setDescription(`En: ${partyText} (${p.discordTag || 'Discord'})`)
+            .setValue(pUid);
+        });
+
+        const select = new StringSelectMenuBuilder()
+          .setCustomId('select_admin_pick_player')
+          .setPlaceholder('Elegí qué personaje querés mover...')
+          .addOptions(options);
+
+        await interaction.reply({
+          content: '🔀 **Gestión de partys:** ¿Qué personaje querés reasignar o mover?',
+          components: [new ActionRowBuilder().addComponents(select)],
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+
       // ── Desarmar Partys (admin) ─────────────────────────────────────────
       if (interaction.customId === 'btn_desarmar') {
         if (!isAdmin(interaction.member)) {
-          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden hacer esto.', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden hacer esto.', flags: MessageFlags.Ephemeral });
           return;
         }
         state.parties.forEach(p => { if (!p.fixed) p.members = []; });
@@ -360,7 +399,7 @@ client.on(Events.InteractionCreate, async interaction => {
       // ── Resetear Todo (admin) ───────────────────────────────────────────
       if (interaction.customId === 'btn_reset') {
         if (!isAdmin(interaction.member)) {
-          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden hacer esto.', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden hacer esto.', flags: MessageFlags.Ephemeral });
           return;
         }
         const confirmBtn = new ButtonBuilder().setCustomId('btn_reset_confirm').setLabel('✅ Sí, borrar todo').setStyle(ButtonStyle.Danger);
@@ -391,7 +430,7 @@ client.on(Events.InteractionCreate, async interaction => {
       // ── Fijar/Desfijar Party (admin) ────────────────────────────────────
       if (interaction.customId === 'btn_pin') {
         if (!isAdmin(interaction.member)) {
-          await interaction.reply({ content: '❌ Solo los administradores o asistentes pueden hacer esto.', flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: '❌ Solo los administradores, asistentes o soporte pueden hacer esto.', flags: MessageFlags.Ephemeral });
           return;
         }
         if (state.parties.length === 0) {
@@ -420,7 +459,98 @@ client.on(Events.InteractionCreate, async interaction => {
     // ── SELECT MENUS ────────────────────────────────────────────────────────
     if (interaction.isStringSelectMenu()) {
 
-      // ── Unirse a party ──────────────────────────────────────────────────
+      // ── Admin: Elegir a qué party mover un jugador ───────────────────────
+      if (interaction.customId === 'select_admin_pick_player') {
+        const targetUid    = interaction.values[0];
+        const targetPlayer = state.players[targetUid];
+        if (!targetPlayer) {
+          await interaction.update({ content: '❌ Jugador no encontrado.', components: [] });
+          return;
+        }
+
+        const currentParty = state.parties.find(p => p.members.includes(targetUid));
+        const options = [];
+
+        // Opción para sacar de party (quedar sin asignar)
+        options.push(
+          new StringSelectMenuOptionBuilder()
+            .setLabel('📋 Dejar Sin Asignar (Quitar de su party)')
+            .setDescription('Saca al jugador de su party actual y lo deja en espera')
+            .setValue('unassign')
+        );
+
+        // Opciones para mover a cada party
+        for (const p of state.parties) {
+          const isCurrent = currentParty?.id === p.id;
+          const isFull    = p.members.length >= MAX_MEMBERS;
+          options.push(
+            new StringSelectMenuOptionBuilder()
+              .setLabel(`${p.name} (${p.members.length}/${MAX_MEMBERS})${isCurrent ? ' [Actual]' : ''}`)
+              .setDescription(isCurrent ? 'Ya está en esta party' : (isFull ? 'Party completa (5/5)' : 'Mover jugador aquí'))
+              .setValue(p.id)
+          );
+        }
+
+        const select = new StringSelectMenuBuilder()
+          .setCustomId(`select_admin_target_party_${targetUid}`)
+          .setPlaceholder(`Elegí el destino para ${targetPlayer.name}...`)
+          .addOptions(options.slice(0, 25));
+
+        await interaction.update({
+          content: `🔀 **Mover a ${targetPlayer.name}:** ¿A qué party querés asignarlo?`,
+          components: [new ActionRowBuilder().addComponents(select)],
+        });
+        return;
+      }
+
+      // ── Admin: Aplicar movimiento de party ──────────────────────────────
+      if (interaction.customId.startsWith('select_admin_target_party_')) {
+        const targetUid    = interaction.customId.replace('select_admin_target_party_', '');
+        const targetPlayer = state.players[targetUid];
+        const destination  = interaction.values[0];
+
+        if (!targetPlayer) {
+          await interaction.update({ content: '❌ Jugador no encontrado.', components: [] });
+          return;
+        }
+
+        // Remover de cualquier party actual
+        state.parties.forEach(p => {
+          p.members = p.members.filter(m => m !== targetUid);
+        });
+
+        if (destination === 'unassign') {
+          saveState(state);
+          await interaction.update({
+            content: `✅ **${targetPlayer.name}** fue retirado de su party y ahora está en **Sin asignar**.`,
+            components: [],
+          });
+          refreshMessage();
+          return;
+        }
+
+        const targetParty = state.parties.find(p => p.id === destination);
+        if (!targetParty) {
+          await interaction.update({ content: '❌ Party de destino no encontrada.', components: [] });
+          return;
+        }
+
+        if (targetParty.members.length >= MAX_MEMBERS) {
+          await interaction.update({ content: `❌ La **${targetParty.name}** ya está llena (5/5).`, components: [] });
+          return;
+        }
+
+        targetParty.members.push(targetUid);
+        saveState(state);
+        await interaction.update({
+          content: `✅ **${targetPlayer.name}** fue movido a **${targetParty.name}** correctamente.`,
+          components: [],
+        });
+        refreshMessage();
+        return;
+      }
+
+      // ── Unirse a party (jugador) ────────────────────────────────────────
       if (interaction.customId === 'select_join_party') {
         const partyId = interaction.values[0];
         const party   = state.parties.find(p => p.id === partyId);
