@@ -1,0 +1,181 @@
+{
+  "parties": [
+    {
+      "id": "party_1",
+      "name": "Party 1",
+      "members": [
+        "709092274281119804",
+        "1385770674303537155",
+        "1353493332436975689",
+        "1167689767404716112"
+      ],
+      "fixed": false
+    },
+    {
+      "id": "party_2",
+      "name": "Party 2",
+      "members": [
+        "356496336079552525",
+        "1558929388760858644",
+        "1329901199457128489"
+      ],
+      "fixed": false
+    },
+    {
+      "id": "party_3",
+      "name": "Party 3",
+      "members": [
+        "1013977109397516328",
+        "706734124337201172",
+        "925222969993723904",
+        "1407618804535660564"
+      ],
+      "fixed": false
+    },
+    {
+      "id": "party_4",
+      "name": "Party 4",
+      "members": [
+        "472880105715269642",
+        "783100111088517151"
+      ],
+      "fixed": false
+    },
+    {
+      "id": "party_5",
+      "name": "Party 5",
+      "members": [
+        "1270553622509260850"
+      ],
+      "fixed": false
+    },
+    {
+      "id": "party_6",
+      "name": "Party 6",
+      "members": [],
+      "fixed": false
+    },
+    {
+      "id": "party_7",
+      "name": "Party 7",
+      "members": [],
+      "fixed": false
+    },
+    {
+      "id": "party_8",
+      "name": "Party 8",
+      "members": [
+        "280142109623844864",
+        "1353509863753252914",
+        "1428899666300239926",
+        "830705180760211466"
+      ],
+      "fixed": false
+    },
+    {
+      "id": "party_9",
+      "name": "Party 9",
+      "members": [],
+      "fixed": false
+    }
+  ],
+  "players": {
+    "709092274281119804": {
+      "name": "Bahamoth",
+      "class": "dl",
+      "discordTag": "fazzitto."
+    },
+    "356496336079552525": {
+      "name": "Mustang",
+      "class": "sm",
+      "discordTag": "brianr3331"
+    },
+    "1385770674303537155": {
+      "name": "GOROAZTEKA",
+      "class": "mg",
+      "discordTag": "goroazteka_"
+    },
+    "1353493332436975689": {
+      "name": "La Sapito",
+      "class": "elf",
+      "discordTag": "villadolorense"
+    },
+    "1013977109397516328": {
+      "name": "DmoonKing",
+      "class": "dl",
+      "discordTag": "cburgosr"
+    },
+    "472880105715269642": {
+      "name": "Mahoraga",
+      "class": "dl",
+      "discordTag": "giancargp92"
+    },
+    "706734124337201172": {
+      "name": "Takamura25",
+      "class": "dl",
+      "discordTag": "lokuaz25"
+    },
+    "1428899666300239926": {
+      "name": "FRESAMG",
+      "class": "mg",
+      "discordTag": "fresita987"
+    },
+    "783100111088517151": {
+      "name": "BlueGirl",
+      "class": "elf",
+      "discordTag": "blue070326"
+    },
+    "925222969993723904": {
+      "name": "Raptalia",
+      "class": "elf",
+      "discordTag": "manuelf0750"
+    },
+    "1558929388760858644": {
+      "name": "AMDRyzen5",
+      "class": "dl",
+      "discordTag": "x_mandarina_xd"
+    },
+    "693971821107871775": {
+      "name": "CD",
+      "class": "sm",
+      "discordTag": "michopatuco79"
+    },
+    "1270553622509260850": {
+      "name": "lPENELOPEl",
+      "class": "dl",
+      "discordTag": "jostel2018"
+    },
+    "280142109623844864": {
+      "name": "GarrenT",
+      "class": "dl",
+      "discordTag": "garrent8358"
+    },
+    "1167689767404716112": {
+      "name": "WARL0CK",
+      "class": "dl",
+      "discordTag": "fedefisherman"
+    },
+    "1353509863753252914": {
+      "name": "silfi",
+      "class": "elf",
+      "discordTag": "muguiwara07805"
+    },
+    "830705180760211466": {
+      "name": "Sunnset",
+      "class": "sm",
+      "discordTag": "kevvo30"
+    },
+    "1329901199457128489": {
+      "name": "Kizame",
+      "class": "mg",
+      "discordTag": "kawamatsu22_12628"
+    },
+    "1407618804535660564": {
+      "name": "SMNemain",
+      "class": "sm",
+      "discordTag": "marco.antoniosanchez"
+    }
+  },
+  "messageId": "1568409417437675574",
+  "nextPartyId": 10
+}
