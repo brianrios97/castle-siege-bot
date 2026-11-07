@@ -6,8 +6,10 @@ const {
   ModalBuilder, TextInputBuilder, TextInputStyle,
   EmbedBuilder, Events, MessageFlags
 } = require('discord.js');
-const fs   = require('fs');
-const path = require('path');
+const fs    = require('fs');
+const path  = require('path');
+const http  = require('http');
+const https = require('https');
 
 // ─── Error handling ───────────────────────────────────────────────────────────
 process.on('unhandledRejection', err => console.error('Unhandled rejection:', err));
@@ -49,10 +51,57 @@ function loadState() {
 }
 
 function saveState(state) {
+  const dir = path.dirname(DATA_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(DATA_PATH, JSON.stringify(state, null, 2), 'utf8');
 }
 
 let state = loadState();
+
+// ─── Render Web Server & Keep-Alive ──────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Castle Siege Bot - Online</title>
+      </head>
+      <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1e1f22;color:#fff;display:flex;align-items:center;justify-content:center;height:90vh;margin:0;">
+        <div style="text-align:center;padding:2.5rem 3rem;background:#2b2d31;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.6);border:1px solid #3f4147;">
+          <h1 style="margin:0 0 0.5rem 0;font-size:1.8rem;">🏰 Castle Siege Discord Bot</h1>
+          <p style="color:#57f287;font-weight:bold;font-size:1.1rem;margin:0.5rem 0;">● Estado: 24/7 ONLINE</p>
+          <div style="margin-top:1.5rem;padding-top:1.5rem;border-top:1px solid #3f4147;color:#b5bac1;font-size:0.95rem;">
+            Partys activas: <b style="color:#fff;">${state.parties.length}</b> &nbsp;|&nbsp; 
+            Jugadores registrados: <b style="color:#fff;">${Object.keys(state.players).length}</b>
+          </div>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+server.listen(PORT, () => {
+  console.log(`🌐 Servidor HTTP para Render listo en el puerto ${PORT}`);
+});
+
+// Auto-ping si está configurado en Render
+const keepAliveUrl = process.env.RENDER_EXTERNAL_URL || process.env.PING_URL;
+if (keepAliveUrl) {
+  console.log(`⏱️ Auto-ping activado para ${keepAliveUrl} cada 10 minutos.`);
+  setInterval(() => {
+    try {
+      const clientHttp = keepAliveUrl.startsWith('https') ? https : http;
+      clientHttp.get(keepAliveUrl, () => {
+        console.log(`⏱️ Ping keep-alive enviado a ${keepAliveUrl}`);
+      }).on('error', err => console.log('Ping keep-alive:', err.message));
+    } catch (e) {
+      console.error('Error en ping self:', e);
+    }
+  }, 10 * 60 * 1000);
+}
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 function validateParty(party) {
@@ -77,7 +126,7 @@ function validateParty(party) {
   return { isValid, isFull, status, missing };
 }
 
-// ─── Embed builder ────────────────────────────────────────────────────────────
+// ─── Embed builder ────────────────────────────────────────────────────
 function buildEmbed() {
   const embed = new EmbedBuilder()
     .setTitle('🏰 CASTLE SIEGE — PARTYS')
@@ -341,7 +390,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      // ── Nueva Party (¡Ahora disponible para TODOS los usuarios!) ─────────
+      // ── Nueva Party (¡Disponible para TODOS!) ───────────────────────────
       if (interaction.customId === 'btn_newparty') {
         const id   = `party_${state.nextPartyId++}`;
         const name = `Party ${state.parties.length + 1}`;
@@ -398,7 +447,6 @@ client.on(Events.InteractionCreate, async interaction => {
           .setPlaceholder('Elegí qué personaje querés mover...')
           .addOptions(options);
 
-        // Si ya estamos dentro de un mensaje efímero del panel, usamos update
         if (interaction.message?.flags?.has(MessageFlags.Ephemeral)) {
           await interaction.update({
             content: '🔀 **Gestión de partys:** ¿Qué personaje querés reasignar o mover?',
