@@ -179,7 +179,7 @@ function buildEmbed() {
     .setFooter({ text: 'Castle Siege • MuServer' });
 
   if (state.parties.length === 0) {
-    embed.setDescription('> No hay partys creadas aún.\n> Podés crear una haciendo click en **➕ Nueva Party**.');
+    embed.setDescription('> No hay partys creadas aún.\n> Un administrador o asistente puede crear una con **➕ Nueva Party**.');
   } else {
     const fields = state.parties.map((party, i) => {
       const { status, missing } = validateParty(party);
@@ -251,8 +251,9 @@ function buildPublicRows() {
 function buildStaffPanelRows() {
   return [
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('btn_newparty').setLabel('➕ Nueva Party').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('btn_move_player').setLabel('🔀 Mover PJ').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('btn_pin').setLabel('📌 Fijar/Desfijar Party').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('btn_pin').setLabel('📌 Fijar/Desfijar').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('btn_desarmar').setLabel('🔄 Desarmar Partys').setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId('btn_reset').setLabel('🗑️ Resetear Todo').setStyle(ButtonStyle.Danger),
     )
@@ -365,7 +366,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setCustomId('char_name')
           .setLabel('Nombre del personaje')
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder('Ej: Mustang, Sagat, Vashi...')
+          .setPlaceholder('Ej: Mustang, Maxi, Vashi...')
           .setValue(currentPlayer?.name || '')
           .setRequired(true)
           .setMaxLength(30);
@@ -455,8 +456,15 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
 
-      // ── Nueva Party (Disponible para todos) ─────────────────────────────
+      // ── Nueva Party (Solo miembros con rol) ─────────────────────────────
       if (interaction.customId === 'btn_newparty') {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({
+            content: '❌ Solo los miembros con rol de **Asistente**, **Soporte** o **Administrador** pueden crear partys.',
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
         const id   = `party_${state.nextPartyId++}`;
         const name = `Party ${state.parties.length + 1}`;
         state.parties.push({ id, name, members: [], fixed: false });
